@@ -35,6 +35,7 @@ enum class OptimisationPreset
 {
 	None,
 	Minimal,
+	YulSSA,
 	Standard,
 	Full,
 };
@@ -77,6 +78,14 @@ struct OptimiserSettings
 		s.simpleCounterForLoopUncheckedIncrement = true;
 		return s;
 	}
+	/// YulSSA optimization settings
+	static OptimiserSettings yulSSA()
+	{
+		auto s = minimal();
+		s.runPeephole = false;
+		s.runSSAYul = true;
+		return s;
+	}
 	/// Standard optimisations.
 	static OptimiserSettings standard()
 	{
@@ -105,6 +114,7 @@ struct OptimiserSettings
 		{
 			case OptimisationPreset::None: return none();
 			case OptimisationPreset::Minimal: return minimal();
+			case OptimisationPreset::YulSSA: return yulSSA();
 			case OptimisationPreset::Standard: return standard();
 			case OptimisationPreset::Full: return full();
 		}
@@ -124,6 +134,7 @@ struct OptimiserSettings
 			simpleCounterForLoopUncheckedIncrement == _other.simpleCounterForLoopUncheckedIncrement &&
 			optimizeStackAllocation == _other.optimizeStackAllocation &&
 			runYulOptimiser == _other.runYulOptimiser &&
+			runSSAYul == _other.runSSAYul &&
 			yulOptimiserSteps == _other.yulOptimiserSteps &&
 			expectedExecutionsPerDeployment == _other.expectedExecutionsPerDeployment;
 	}
@@ -155,6 +166,8 @@ struct OptimiserSettings
 	bool optimizeStackAllocation = false;
 	/// Yul optimiser with default settings. Will only run on certain parts of the code for now.
 	bool runYulOptimiser = false;
+	/// Whether to use the SSA CFG codegen path in Yul
+	bool runSSAYul = false;
 	/// Sequence of optimisation steps to be performed by Yul optimiser.
 	/// Note that there are some hard-coded steps in the optimiser and you cannot disable
 	/// them just by setting this to an empty string. Set @a runYulOptimiser to false if you want
