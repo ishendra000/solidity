@@ -1519,6 +1519,7 @@ void CompilerStack::compileContract(
 
 void CompilerStack::generateIR(ContractDefinition const& _contract, bool _unoptimizedOnly)
 {
+	std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::steady_clock::now();
 	solAssert(m_stackState >= AnalysisSuccessful, "");
 
 	Contract& compiledContract = m_contracts.at(_contract.fullyQualifiedName());
@@ -1589,6 +1590,8 @@ void CompilerStack::generateIR(ContractDefinition const& _contract, bool _unopti
 		stack.optimize();
 		compiledContract.yulIROptimized = stack.print();
 	}
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+	std::cout << "Elapsed generateIR " << elapsed.count() << " ms" << std::endl;
 }
 
 void CompilerStack::generateEVMFromIR(ContractDefinition const& _contract)

@@ -91,6 +91,7 @@ public:
 		MemoryAndStorage _analyzeStores,
 		std::map<FunctionHandle, SideEffects> _functionSideEffects = {}
 	);
+	~DataFlowAnalyzer();
 
 	using ASTModifier::operator();
 	void operator()(ExpressionStatement& _statement) override;

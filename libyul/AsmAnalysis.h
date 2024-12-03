@@ -83,9 +83,12 @@ public:
 	/// Asserts on failure.
 	static AsmAnalysisInfo analyzeStrictAssertCorrect(Object const& _object);
 	static AsmAnalysisInfo analyzeStrictAssertCorrect(
+		AST const& _ast, Object::Structure _objectStructure
+	);
+	static AsmAnalysisInfo analyzeStrictAssertCorrect(
 		Dialect const& _dialect,
 		Block const& _astRoot,
-		Object::Structure const _objectStructure
+		Object::Structure _objectStructure
 	);
 
 	size_t operator()(Literal const& _literal);

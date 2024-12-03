@@ -89,7 +89,15 @@ bool AsmAnalyzer::analyze(Block const& _block)
 AsmAnalysisInfo AsmAnalyzer::analyzeStrictAssertCorrect(Object const& _object)
 {
 	yulAssert(_object.dialect());
-	return analyzeStrictAssertCorrect(*_object.dialect(), _object.code()->root(), _object.summarizeStructure());
+	return analyzeStrictAssertCorrect(*_object.code(), _object.summarizeStructure());
+}
+
+AsmAnalysisInfo AsmAnalyzer::analyzeStrictAssertCorrect(
+	AST const& _ast,
+	Object::Structure _objectStructure
+)
+{
+	return analyzeStrictAssertCorrect(_ast.dialect(), _ast.root(), std::move(_objectStructure));
 }
 
 AsmAnalysisInfo AsmAnalyzer::analyzeStrictAssertCorrect(
