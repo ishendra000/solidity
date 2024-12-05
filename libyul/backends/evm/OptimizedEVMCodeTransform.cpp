@@ -36,6 +36,8 @@
 #include <range/v3/view/reverse.hpp>
 #include <range/v3/view/take_last.hpp>
 
+#include <chrono>
+
 using namespace solidity;
 using namespace solidity::yul;
 
@@ -48,6 +50,7 @@ std::vector<StackTooDeepError> OptimizedEVMCodeTransform::run(
 	UseNamedLabels _useNamedLabelsForFunctions
 )
 {
+	auto start = std::chrono::steady_clock::now();
 	std::unique_ptr<CFG> dfg = ControlFlowGraphBuilder::build(_analysisInfo, _dialect, _block);
 	StackLayout stackLayout = StackLayoutGenerator::run(*dfg, !_dialect.eofVersion().has_value());
 
@@ -81,6 +84,9 @@ std::vector<StackTooDeepError> OptimizedEVMCodeTransform::run(
 	optimizedCodeTransform(*dfg->entry);
 	for (Scope::Function const* function: dfg->functions)
 		optimizedCodeTransform(dfg->functionInfo.at(function));
+
+	auto l = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	std::cout << "OptimizedEVMCodeTransform: " << l << " ms" << std::endl;
 	return std::move(optimizedCodeTransform.m_stackErrors);
 }
 
