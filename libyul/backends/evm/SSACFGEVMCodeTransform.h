@@ -83,6 +83,7 @@ private:
 	void transformFunction(Scope::Function const& _function);
 
 	void operator()(SSACFG::BlockId _block);
+	void operator()(SSACFG::Operation const& _operation, std::set<SSACFG::ValueId> const& _liveOut);
 
 	BlockData& blockData(SSACFG::BlockId const _block) { return m_blockData[_block.value]; }
 	BlockData const& blockData(SSACFG::BlockId const _block) const { return m_blockData[_block.value]; }

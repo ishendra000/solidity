@@ -162,6 +162,10 @@ public:
 	};
 	struct UnreachableValue {};
 	using ValueInfo = std::variant<UnreachableValue, VariableValue, LiteralValue, PhiValue>;
+	bool isLiteralValue(ValueId const _var) const
+	{
+		return std::holds_alternative<LiteralValue>(valueInfo(_var));
+	}
 	ValueInfo& valueInfo(ValueId const _var)
 	{
 		return m_valueInfos.at(_var.value);

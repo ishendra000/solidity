@@ -17,6 +17,7 @@
 // SPDX-License-Identifier: GPL-3.0
 
 
+#include <libsolutil/Visitor.h>
 #include <libyul/backends/evm/SSACFGEVMCodeTransform.h>
 
 #include <libyul/backends/evm/ControlFlowGraph.h>
@@ -137,8 +138,60 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 }
 
 
-void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId _block)
+void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 {
 	yulAssert(!m_generatedBlocks[_block.value]);
+	m_generatedBlocks[_block.value] = true;
+
+	auto &data = blockData(_block);
+	if (!data.label) {
+		data.label = m_assembly.newLabelId();
+		m_assembly.appendLabel(*data.label);
+	}
+
+	{
+		// copy stackIn into stack
+		yulAssert(data.stackIn, fmt::format("No starting layout for block id {}", _block.value));
+		m_stack = *data.stackIn;
+	}
+
+	m_assembly.setStackHeight(static_cast<int>(m_stack.size()));
+	// check that we have as much liveness info as there are ops in the block
+	yulAssert(m_cfg.block(_block).operations.size() == m_liveness.operationsLiveOut(_block).size());
+
+	// for each op with respective live-out, descend into op
+	for (auto&& [op, liveOut]: ranges::zip_view(m_cfg.block(_block).operations, m_liveness.operationsLiveOut(_block)))
+		(*this)(op, liveOut);
+
+	util::GenericVisitor exitVisitor{
+		[&](SSACFG::BasicBlock::MainExit const& /*_mainExit*/)
+		{
+			m_assembly.appendInstruction(evmasm::Instruction::STOP);
+		},
+		[](auto const&)
+		{
+			yulAssert(false, "unhandled");
+		}
+	};
+	std::visit(exitVisitor, m_cfg.block(_block).exit);
 }
 
+void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std::set<SSACFG::ValueId> const& _liveOut)
+{
+	std::vector<StackSlot> requiredStackTop;
+	std::optional<AbstractAssembly::LabelID> returnLabel;
+	if (auto const* call = std::get_if<SSACFG::Call>(&_operation.kind))
+		if (call->canContinue)
+		{
+			returnLabel = m_assembly.newLabelId();
+			requiredStackTop.emplace_back(*returnLabel);
+		}
+	// todo sort by inverse order of occurrence
+	requiredStackTop += _operation.inputs;
+	yulAssert(std::none_of(
+		_liveOut.begin(),
+		_liveOut.end(),
+		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
+	));
+
+}
