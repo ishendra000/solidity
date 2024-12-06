@@ -44,6 +44,8 @@
 #include <range/v3/view/take_last.hpp>
 #include <range/v3/view/transform.hpp>
 
+#include <chrono>
+
 using namespace solidity;
 using namespace solidity::yul;
 
@@ -54,7 +56,6 @@ StackLayout StackLayoutGenerator::run(CFG const& _cfg, bool _simulateFunctionsWi
 
 	for (auto& functionInfo: _cfg.functionInfo | ranges::views::values)
 		StackLayoutGenerator{stackLayout, &functionInfo, _simulateFunctionsWithJumps}.processEntryPoint(*functionInfo.entry, &functionInfo);
-
 	return stackLayout;
 }
 
@@ -335,6 +336,7 @@ Stack StackLayoutGenerator::propagateStackThroughBlock(Stack _exitStack, CFG::Ba
 
 void StackLayoutGenerator::processEntryPoint(CFG::BasicBlock const& _entry, CFG::FunctionInfo const* _functionInfo)
 {
+	auto start = std::chrono::steady_clock::now();
 	std::list<CFG::BasicBlock const*> toVisit{&_entry};
 	std::set<CFG::BasicBlock const*> visited;
 
@@ -405,6 +407,8 @@ void StackLayoutGenerator::processEntryPoint(CFG::BasicBlock const& _entry, CFG:
 
 	stitchConditionalJumps(_entry);
 	fillInJunk(_entry, _functionInfo);
+	auto const l = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	std::cout << "StackLayoutGenerator::run: " << l << " ms" << std::endl;
 }
 
 std::optional<Stack> StackLayoutGenerator::getExitLayoutOrStageDependencies(

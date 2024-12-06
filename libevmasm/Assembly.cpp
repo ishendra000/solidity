@@ -774,7 +774,10 @@ AssemblyItem Assembly::newAuxDataLoadN(size_t _offset)
 
 Assembly& Assembly::optimise(OptimiserSettings const& _settings)
 {
+	auto start = std::chrono::steady_clock::now();
 	optimiseInternal(_settings, {});
+	auto const l = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	std::cout << "Assembly::optimize: " << l << " ms" << std::endl;
 	return *this;
 }
 

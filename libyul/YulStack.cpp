@@ -246,9 +246,25 @@ MachineAssemblyObject YulStack::assemble(Machine _machine)
 	unreachable();
 }
 
+namespace
+{
+struct Timer
+{
+	Timer(std::string name): start(std::chrono::steady_clock::now()), name(std::move(name)) {}
+	~Timer()
+	{
+		auto const l = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+		std::cout << name << ": " << l << " ms" << std::endl;
+	}
+	std::chrono::time_point<std::chrono::steady_clock> start;
+	std::string name;
+};
+}
+
 std::pair<MachineAssemblyObject, MachineAssemblyObject>
 YulStack::assembleWithDeployed(std::optional<std::string_view> _deployName)
 {
+	Timer t {"YulStack::assembleWithDeployed"};
 	yulAssert(m_charStream);
 
 	auto [creationAssembly, deployedAssembly] = assembleEVMWithDeployed(_deployName);
@@ -297,13 +313,13 @@ YulStack::assembleWithDeployed(std::optional<std::string_view> _deployName)
 		reportUnimplementedFeatureError(_error);
 		return {MachineAssemblyObject{}, MachineAssemblyObject{}};
 	}
-
 	return {std::move(creationObject), std::move(deployedObject)};
 }
 
 std::pair<std::shared_ptr<evmasm::Assembly>, std::shared_ptr<evmasm::Assembly>>
 YulStack::assembleEVMWithDeployed(std::optional<std::string_view> _deployName)
 {
+	Timer t {"YulStack::assembleEVMWithDeployed"};
 	yulAssert(m_stackState >= AnalysisSuccessful);
 	yulAssert(m_parserResult, "");
 	yulAssert(m_parserResult->hasCode(), "");

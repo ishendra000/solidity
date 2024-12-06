@@ -137,7 +137,6 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 	(*this)(m_cfg.entry);
 }
 
-
 void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 {
 	yulAssert(!m_generatedBlocks[_block.value]);
@@ -188,6 +187,8 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		}
 	// todo sort by inverse order of occurrence
 	requiredStackTop += _operation.inputs;
+	// literals should have been pulled out
+	// todo double check and document reason!
 	yulAssert(std::none_of(
 		_liveOut.begin(),
 		_liveOut.end(),
