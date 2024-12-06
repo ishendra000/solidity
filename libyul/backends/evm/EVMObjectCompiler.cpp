@@ -24,6 +24,7 @@
 #include <libyul/backends/evm/EVMCodeTransform.h>
 #include <libyul/backends/evm/EVMDialect.h>
 #include <libyul/backends/evm/SSACFGEVMCodeTransform.h>
+#include <libyul/backends/evm/SSAControlFlowGraphBuilder.h>
 #include <libyul/backends/evm/OptimizedEVMCodeTransform.h>
 
 #include <libyul/optimiser/FunctionCallFinder.h>
@@ -95,14 +96,20 @@ void EVMObjectCompiler::run(Object const& _object, bool _optimize, bool const _s
 				OptimizedEVMCodeTransform::UseNamedLabels::ForFirstFunctionOfEachName
 			);
 		else
+		{
+			std::unique_ptr<ControlFlow> const controlFlow = SSAControlFlowGraphBuilder::build(
+				*_object.analysisInfo,
+				m_dialect,
+				_object.code()->root()
+			);
+			ControlFlowLiveness const liveness(*controlFlow);
 			stackErrors = SSACFGEVMCodeTransform::run(
 				m_assembly,
-				*_object.analysisInfo,
-				_object.code()->root(),
-				m_dialect,
+				liveness,
 				context,
 				SSACFGEVMCodeTransform::UseNamedLabels::ForFirstFunctionOfEachName
 			);
+		}
 		if (!stackErrors.empty())
 		{
 			yulAssert(_object.dialect());

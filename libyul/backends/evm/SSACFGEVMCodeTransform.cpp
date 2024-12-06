@@ -30,27 +30,24 @@ using namespace solidity::yul;
 
 std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 	AbstractAssembly& _assembly,
-	AsmAnalysisInfo& _analysisInfo,
-	Block const& _block,
-	EVMDialect const& _dialect,
+	ControlFlowLiveness const& _liveness,
 	BuiltinContext& _builtinContext,
 	UseNamedLabels _useNamedLabelsForFunctions)
 {
-	std::unique_ptr<ControlFlow> controlFlow = SSAControlFlowGraphBuilder::build(_analysisInfo, _dialect, _block);
-	ControlFlowLiveness liveness(*controlFlow);
 	{
 		// todo remove, just for debugging
-		fmt::print("{}\n", controlFlow->toDot(&liveness));
+		fmt::print("{}\n", _liveness.toDot());
 		std::fflush(nullptr);
 	}
-	auto functionLabels = registerFunctionLabels(_assembly, *controlFlow, _useNamedLabelsForFunctions);
+	auto const& controlFlow = _liveness.controlFlow.get();
+	auto functionLabels = registerFunctionLabels(_assembly, controlFlow, _useNamedLabelsForFunctions);
 
 	SSACFGEVMCodeTransform mainCodeTransform(
 		_assembly,
 		_builtinContext,
 		functionLabels,
-		*controlFlow->mainGraph,
-		*liveness.mainLiveness
+		*controlFlow.mainGraph,
+		*_liveness.mainLiveness
 	);
 
 	// Force main entry block to start from an empty stack.
@@ -61,7 +58,7 @@ std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 	if (!mainCodeTransform.m_stackErrors.empty())
 		stackErrors = std::move(mainCodeTransform.m_stackErrors);
 
-	for (auto const& [functionAndGraph, functionLiveness]: ranges::zip_view(controlFlow->functionGraphMapping, liveness.functionLiveness))
+	for (auto const& [functionAndGraph, functionLiveness]: ranges::zip_view(controlFlow.functionGraphMapping, _liveness.functionLiveness))
 	{
 		auto const& [function, functionGraph] = functionAndGraph;
 		SSACFGEVMCodeTransform functionCodeTransform(

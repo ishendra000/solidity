@@ -49,9 +49,7 @@ public:
 
 	static std::vector<StackTooDeepError> run(
 		AbstractAssembly& _assembly,
-		AsmAnalysisInfo& _analysisInfo,
-		Block const& _block,
-		EVMDialect const& _dialect,
+		ControlFlowLiveness const& _liveness,
 		BuiltinContext& _builtinContext,
 		UseNamedLabels _useNamedLabelsForFunctions
 	);
