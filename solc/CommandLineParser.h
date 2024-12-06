@@ -232,6 +232,7 @@ struct CommandLineOptions
 	{
 		bool optimizeEvmasm = false;
 		bool optimizeYul = false;
+		bool ssaCfg = false;
 		std::optional<unsigned> expectedExecutionsPerDeployment;
 		std::optional<std::string> yulSteps;
 	} optimizer;

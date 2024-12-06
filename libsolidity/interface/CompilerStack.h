@@ -223,6 +223,8 @@ public:
 	/// Must be set before parsing.
 	void setViaIR(bool _viaIR);
 
+	void setSSACFGCodegen(bool _ssaCfgCodegen) { m_optimiserSettings.runSSAYul = _ssaCfgCodegen; }
+
 	/// Set the EVM version used before running compile.
 	/// When called without an argument it will revert to the default version.
 	/// Must be set before parsing.

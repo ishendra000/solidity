@@ -50,6 +50,7 @@ static std::string const g_strEVMVersion = "evm-version";
 static std::string const g_strEOFVersion = "experimental-eof-version";
 static std::string const g_strViaIR = "via-ir";
 static std::string const g_strExperimentalViaIR = "experimental-via-ir";
+static std::string const g_strSSACFGCodegen = "ssa-cfg-codegen";
 static std::string const g_strGas = "gas";
 static std::string const g_strHelp = "help";
 static std::string const g_strImportAst = "import-ast";
@@ -277,6 +278,9 @@ OptimiserSettings CommandLineOptions::optimiserSettings() const
 
 	if (optimizer.expectedExecutionsPerDeployment.has_value())
 		settings.expectedExecutionsPerDeployment = optimizer.expectedExecutionsPerDeployment.value();
+	settings.runSSAYul = optimizer.ssaCfg;
+	if (optimizer.ssaCfg)
+		settings.runPeephole = false;
 
 	if (optimizer.yulSteps.has_value())
 	{
@@ -619,7 +623,8 @@ General Information)").c_str(),
 			("Select desired EVM version: " + annotatedEVMVersions + ".").c_str()
 		)
 	;
-	if (!_forHelp) // Note: We intentionally keep this undocumented for now.
+	if (!_forHelp)
+		// Note: We intentionally keep this undocumented for now.
 		outputOptions.add_options()
 			(
 				g_strEOFVersion.c_str(),
@@ -630,6 +635,9 @@ General Information)").c_str(),
 			)
 			(
 				g_strYul.c_str(), "The typed Yul dialect is no longer supported. For regular Yul compilation use --strict-assembly instead."
+			)
+			(
+				g_strSSACFGCodegen.c_str(), "Use SSA CFG Codegen path in Yul."
 			)
 		;
 	outputOptions.add_options()
@@ -1246,6 +1254,9 @@ void CommandLineParser::processArgs()
 	);
 	if (!m_args[g_strOptimizeRuns].defaulted())
 		m_options.optimizer.expectedExecutionsPerDeployment = m_args.at(g_strOptimizeRuns).as<unsigned>();
+
+	if (m_args.count(g_strSSACFGCodegen))
+		m_options.optimizer.ssaCfg = true;
 
 	if (m_args.count(g_strYulOptimizations))
 	{
