@@ -51,7 +51,7 @@ std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 	);
 
 	// Force main entry block to start from an empty stack.
-	mainCodeTransform.blockData(SSACFG::BlockId{0}).stackIn = std::make_optional(std::vector<StackSlot>{});
+	mainCodeTransform.blockData(SSACFG::BlockId{0}).stackIn = std::make_optional<std::vector<ssacfg::StackSlot>>();
 	mainCodeTransform(SSACFG::BlockId{0});
 
 	std::vector<StackTooDeepError> stackErrors;
@@ -122,6 +122,7 @@ std::map<Scope::Function const*, AbstractAssembly::LabelID> SSACFGEVMCodeTransfo
 	m_cfg(_cfg),
 	m_liveness(_liveness),
 	m_functionLabels(std::move(_functionLabels)),
+	m_stack(_assembly),
 	m_blockData(_cfg.numBlocks()),
 	m_generatedBlocks(_cfg.numBlocks(), false)
 { }
@@ -130,7 +131,7 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 {
 	// Force function entry block to start from initial function layout.
 	m_assembly.appendLabel(functionLabel(_function));
-	blockData(m_cfg.entry).stackIn = m_cfg.arguments | ranges::views::transform([](auto&& _tuple) { return std::get<1>(_tuple); }) | ranges::to<std::vector<StackSlot>>;
+	blockData(m_cfg.entry).stackIn = m_cfg.arguments | ranges::views::transform([](auto&& _tuple) { return std::get<1>(_tuple); }) | ranges::to<std::vector<ssacfg::StackSlot>>;
 	(*this)(m_cfg.entry);
 }
 
@@ -174,7 +175,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 
 void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std::set<SSACFG::ValueId> const& _liveOut)
 {
-	std::vector<StackSlot> requiredStackTop;
+	std::vector<ssacfg::StackSlot> requiredStackTop;
 	std::optional<AbstractAssembly::LabelID> returnLabel;
 	if (auto const* call = std::get_if<SSACFG::Call>(&_operation.kind))
 		if (call->canContinue)
@@ -191,5 +192,4 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		_liveOut.end(),
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
-
 }

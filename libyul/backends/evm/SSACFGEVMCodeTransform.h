@@ -40,6 +40,25 @@ namespace solidity::yul
 struct AsmAnalysisInfo;
 struct StackLayout;
 
+namespace ssacfg
+{
+using StackSlot = std::variant<SSACFG::ValueId, AbstractAssembly::LabelID>;
+class Stack
+{
+public:
+	explicit Stack(AbstractAssembly& _assembly): m_assembly(_assembly) {}
+	Stack(Stack const&) = default;
+	Stack(Stack&&) = default;
+	Stack& operator=(Stack const&) = default;
+	Stack& operator=(Stack&&) = default;
+
+	size_t size() const { return m_stack.size(); }
+private:
+	std::reference_wrapper<AbstractAssembly> m_assembly;
+	std::vector<StackSlot> m_stack;
+};
+}
+
 class SSACFGEVMCodeTransform
 {
 public:
@@ -55,12 +74,11 @@ public:
 	);
 
 private:
-	using StackSlot = std::variant<SSACFG::ValueId, AbstractAssembly::LabelID>;
 	using FunctionLabels = std::map<Scope::Function const*, AbstractAssembly::LabelID>;
 	struct BlockData {
 		bool generated = false;
 		std::optional<AbstractAssembly::LabelID> label;
-		std::optional<std::vector<StackSlot>> stackIn;
+		std::optional<std::vector<ssacfg::StackSlot>> stackIn;
 		//std::optional<std::vector<StackSlot>> stackOut;
 	};
 
@@ -96,7 +114,7 @@ private:
 	SSACFGLiveness const& m_liveness;
 	std::vector<StackTooDeepError> m_stackErrors;
 	std::map<Scope::Function const*, AbstractAssembly::LabelID> const m_functionLabels;
-	std::vector<StackSlot> m_stack;
+	ssacfg::Stack m_stack;
 	std::vector<BlockData> m_blockData;
 	SSACFG::BlockId m_currentBlock;
 	std::vector<std::uint8_t> m_generatedBlocks;
