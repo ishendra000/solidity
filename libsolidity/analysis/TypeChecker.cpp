@@ -47,6 +47,7 @@
 #include <range/v3/algorithm/count_if.hpp>
 #include <range/v3/view/drop_exactly.hpp>
 #include <range/v3/view/enumerate.hpp>
+#include <range/v3/view/reverse.hpp>
 #include <range/v3/view/zip.hpp>
 
 #include <memory>
@@ -234,6 +235,20 @@ bool TypeChecker::visit(ImportDirective const&)
 
 void TypeChecker::endVisit(ContractDefinition const& _contract)
 {
+	for (auto const* ancestorContract: _contract.annotation().linearizedBaseContracts | ranges::views::reverse)
+		if (*ancestorContract != _contract && ancestorContract->storageBaseLocationExpression())
+		{
+			m_errorReporter.typeError(
+				8894_error,
+				_contract.location(),
+				SecondarySourceLocation().append(
+					"Storage base location was already specified here.",
+					ancestorContract->storageBaseLocationExpression()->location()
+				),
+				"Storage base location can only be specified in the most derived contract."
+			);
+			return;
+		}
 	if (ASTPointer<Expression> const baseLocation = _contract.storageBaseLocationExpression())
 	{
 		if (_contract.isLibrary() || _contract.abstract())
