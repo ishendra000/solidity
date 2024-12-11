@@ -46,13 +46,20 @@ using StackSlot = std::variant<SSACFG::ValueId, AbstractAssembly::LabelID>;
 class Stack
 {
 public:
-	explicit Stack(AbstractAssembly& _assembly): m_assembly(_assembly) {}
+	explicit Stack(AbstractAssembly& _assembly, std::vector<StackSlot> const& _initialStack = {}):
+		m_assembly(_assembly), m_stack(_initialStack) {}
 	Stack(Stack const&) = default;
 	Stack(Stack&&) = default;
 	Stack& operator=(Stack const&) = default;
 	Stack& operator=(Stack&&) = default;
 
 	size_t size() const { return m_stack.size(); }
+
+	void createExactStack(std::vector<StackSlot> const& _target);
+
+	void pop();
+	void swap(size_t _depth);
+	void bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg);
 private:
 	std::reference_wrapper<AbstractAssembly> m_assembly;
 	std::vector<StackSlot> m_stack;

@@ -24,9 +24,72 @@
 #include <libyul/backends/evm/SSAControlFlowGraphBuilder.h>
 
 #include <range/v3/range/conversion.hpp>
+#include <range/v3/view/enumerate.hpp>
+#include <range/v3/view/filter.hpp>
+#include <range/v3/view/reverse.hpp>
 #include <range/v3/view/zip.hpp>
 
 using namespace solidity::yul;
+
+void ssacfg::Stack::pop()
+{
+	yulAssert(!m_stack.empty());
+	m_stack.pop_back();
+	m_assembly.get().appendInstruction(evmasm::Instruction::POP);
+}
+
+void ssacfg::Stack::swap(size_t const _depth)
+{
+	yulAssert(m_stack.size() > _depth);
+	std::swap(m_stack[m_stack.size() - _depth - 1], m_stack.back());
+	m_assembly.get().appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(_depth)));
+}
+
+void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
+{
+	std::visit(util::GenericVisitor{
+		[&](SSACFG::ValueId _value) {
+			if (auto depth = util::findOffset(m_stack | ranges::views::reverse, _slot))
+			{
+				m_assembly.get().appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(*depth + 1)));
+				m_stack.emplace_back(_slot);
+				return;
+			}
+			std::visit(util::GenericVisitor{
+				[&](SSACFG::UnreachableValue const&) { solAssert(false); },
+				[&](SSACFG::VariableValue const&) { solAssert(false); },
+				[&](SSACFG::PhiValue const&) { solAssert(false); },
+				[&](SSACFG::LiteralValue const& _literal) {
+					m_assembly.get().appendConstant(_literal.value);
+					m_stack.emplace_back(_value);
+				}
+			}, _cfg.valueInfo(_value));
+		},
+		[&](AbstractAssembly::LabelID _label) {
+			m_assembly.get().appendLabelReference(_label);
+			m_stack.emplace_back(_label);
+		}
+	}, _slot);
+}
+
+void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target)
+{
+	auto const targetPositions = [&](StackSlot const& _slot){
+		std::vector<size_t> positions;
+		for (auto const& [targetPosition, slot]: _target | ranges::views::enumerate)
+			if (slot == _slot)
+				positions.emplace_back(targetPosition);
+		return positions;
+	};
+	// as long as the stack isn't final, dup and swap the current top wherever it needs to go
+	while (m_stack.size() > _target.size() || (!m_stack.empty() && _target[m_stack.size() - 1] != m_stack.back()))
+	{
+		// Try to swap it to where it is still needed - or otherwise pop it.
+		swapTopToTargetOrPop();
+	}
+	yulAssert(_target == m_stack);
+}
+
 
 std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 	AbstractAssembly& _assembly,
@@ -149,7 +212,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 	{
 		// copy stackIn into stack
 		yulAssert(data.stackIn, fmt::format("No starting layout for block id {}", _block.value));
-		m_stack = *data.stackIn;
+		m_stack = ssacfg::Stack{m_assembly, *data.stackIn};
 	}
 
 	m_assembly.setStackHeight(static_cast<int>(m_stack.size()));
@@ -192,4 +255,5 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		_liveOut.end(),
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
+	m_stack.createExactStack(std::vector<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) + requiredStackTop);
 }
