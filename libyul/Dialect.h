@@ -41,6 +41,7 @@ struct Literal;
 
 struct BuiltinFunction
 {
+	virtual ~BuiltinFunction() = default;
 	std::string name;
 	size_t numParameters;
 	size_t numReturns;
