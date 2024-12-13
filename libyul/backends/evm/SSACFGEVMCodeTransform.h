@@ -55,10 +55,11 @@ public:
 
 	size_t size() const { return m_stack.size(); }
 
-	void createExactStack(std::vector<StackSlot> const& _target);
+	void createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg);
 
 	void pop();
 	void swap(size_t _depth);
+	void dup(size_t _depth);
 	void bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg);
 private:
 	std::reference_wrapper<AbstractAssembly> m_assembly;

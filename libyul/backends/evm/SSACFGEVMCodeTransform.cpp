@@ -25,7 +25,7 @@
 
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/enumerate.hpp>
-#include <range/v3/view/filter.hpp>
+#include <range/v3/view/iota.hpp>
 #include <range/v3/view/reverse.hpp>
 #include <range/v3/view/zip.hpp>
 
@@ -43,6 +43,12 @@ void ssacfg::Stack::swap(size_t const _depth)
 	yulAssert(m_stack.size() > _depth);
 	std::swap(m_stack[m_stack.size() - _depth - 1], m_stack.back());
 	m_assembly.get().appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(_depth)));
+}
+
+void ssacfg::Stack::dup(size_t const _depth)
+{
+	m_stack.push_back(m_stack[m_stack.size() - _depth - 1]);
+	m_assembly.get().appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(_depth)));
 }
 
 void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
@@ -72,22 +78,84 @@ void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
 	}, _slot);
 }
 
-void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target)
+void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg)
 {
-	auto const targetPositions = [&](StackSlot const& _slot){
-		std::vector<size_t> positions;
-		for (auto const& [targetPosition, slot]: _target | ranges::views::enumerate)
-			if (slot == _slot)
-				positions.emplace_back(targetPosition);
-		return positions;
-	};
-	// as long as the stack isn't final, dup and swap the current top wherever it needs to go
-	while (m_stack.size() > _target.size() || (!m_stack.empty() && _target[m_stack.size() - 1] != m_stack.back()))
+	// first, remove everything from the stack that occurs more often than what's in the target
 	{
-		// Try to swap it to where it is still needed - or otherwise pop it.
-		swapTopToTargetOrPop();
+		auto const sortedStackSlotCounts = [](std::vector<StackSlot> const& _stack)
+		{
+			std::map<StackSlot, size_t> counts;
+			for (auto const& targetSlot : _stack)
+				counts[targetSlot]++;
+			return counts;
+		};
+		auto const targetCounts = sortedStackSlotCounts(_target);
+		auto const stackCounts = sortedStackSlotCounts(m_stack);
+		for (auto const& [slot, count]: stackCounts)
+		{
+			size_t targetCount = 0;
+			if (auto it = targetCounts.find(slot); it != targetCounts.end())
+				targetCount = it->second;
+			if (count > targetCount)
+				for (size_t i = 0; i < count - targetCount; ++i)
+				{
+					auto depth = util::findOffset(m_stack | ranges::views::reverse, slot);
+					yulAssert(depth);
+					if (depth > 0)
+						swap(*depth);
+					pop();
+				}
+		}
+		for (auto const& [slot, targetCount]: targetCounts)
+		{
+			auto findIt = stackCounts.find(slot);
+			if (findIt == stackCounts.end())
+			{
+				std::visit(util::GenericVisitor{
+					[&](SSACFG::ValueId const& _value) {
+						auto const& info = _cfg.valueInfo(_value);
+						yulAssert(std::holds_alternative<SSACFG::LiteralValue>(info), "Target contained a slot that wasn't in the stack and not a label reference or a literal value.");
+						m_assembly.get().appendConstant(std::get<SSACFG::LiteralValue>(info).value);
+						m_stack.emplace_back(_value);
+					},
+					[this](AbstractAssembly::LabelID const& _label)
+					{
+						m_assembly.get().appendLabelReference(_label);
+						m_stack.emplace_back(_label);
+					}
+				}, slot);
+			}
+			else
+			{
+				auto currentCount = std::min(targetCount, findIt->second);
+				yulAssert(currentCount <= targetCount);
+				for (size_t i = 0; i < targetCount - currentCount; ++i)
+				{
+					auto const depth = util::findOffset(m_stack | ranges::views::reverse, slot);
+					yulAssert(depth);
+					dup(*depth);
+				}
+			}
+		}
 	}
-	yulAssert(_target == m_stack);
+	// now we have the same elements in the stack just in a different order
+	yulAssert(size() == _target.size());
+	for (size_t i = 0; i < _target.size(); ++i)
+	{
+		// look at the bottom element of the stack and swap something there if it's not already the correct slot
+		if (m_stack[i] != _target[i])
+		{
+			auto const depth = util::findOffset(m_stack | ranges::views::reverse, _target[i]);
+			if (depth > 0)
+				swap(*depth);
+			yulAssert(m_stack.back() == _target[i]);
+			swap(m_stack.size() - 1);
+		}
+		yulAssert(m_stack[i] == _target[i]);
+	}
+
+	yulAssert(size() == _target.size());
+	yulAssert(m_stack == _target);
 }
 
 
@@ -255,5 +323,5 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		_liveOut.end(),
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
-	m_stack.createExactStack(std::vector<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) + requiredStackTop);
+	m_stack.createExactStack(std::vector<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) + requiredStackTop, m_cfg);
 }
