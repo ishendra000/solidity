@@ -17,11 +17,13 @@
 // SPDX-License-Identifier: GPL-3.0
 
 
-#include <libsolutil/Visitor.h>
 #include <libyul/backends/evm/SSACFGEVMCodeTransform.h>
 
 #include <libyul/backends/evm/ControlFlowGraph.h>
 #include <libyul/backends/evm/SSAControlFlowGraphBuilder.h>
+
+#include <libsolutil/StringUtils.h>
+#include <libsolutil/Visitor.h>
 
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/enumerate.hpp>
@@ -29,7 +31,51 @@
 #include <range/v3/view/reverse.hpp>
 #include <range/v3/view/zip.hpp>
 
+using namespace solidity;
 using namespace solidity::yul;
+
+namespace
+{
+
+std::string ssaCfgVarToString(SSACFG const& _cfg, SSACFG::ValueId _var)
+{
+	if (_var.value == std::numeric_limits<size_t>::max())
+		return "INVALID";
+	auto const& info = _cfg.valueInfo(_var);
+	return std::visit(
+		util::GenericVisitor{
+			[&](SSACFG::UnreachableValue const&) -> std::string {
+				return "[unreachable]";
+			},
+			[&](SSACFG::LiteralValue const& _literal) {
+				std::stringstream str;
+				str << _literal.value;
+				return str.str();
+			},
+			[&](auto const&) {
+				return "v" + std::to_string(_var.value);
+			}
+		},
+		info
+	);
+}
+
+std::string stackSlotToString(SSACFG const& _cfg, ssacfg::StackSlot const& _slot)
+{
+	return std::visit(util::GenericVisitor{
+		[&](SSACFG::ValueId _value) {
+			return ssaCfgVarToString(_cfg, _value);
+		},
+		[](AbstractAssembly::LabelID _label) {
+			return "LABEL[" + std::to_string(_label) + "]";
+		}
+	}, _slot);
+}
+std::string stackToString(SSACFG const& _cfg, std::vector<ssacfg::StackSlot> const& _stack)
+{
+	return "[" + util::joinHumanReadable(_stack | ranges::views::transform([&](ssacfg::StackSlot const& _slot) { return stackSlotToString(_cfg, _slot); })) + "]";
+}
+}
 
 void ssacfg::Stack::pop(bool _generateInstruction)
 {
@@ -68,6 +114,14 @@ void ssacfg::Stack::dup(size_t const _depth, bool _generateInstruction)
 		m_assembly.get().appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(_depth + 1)));
 }
 
+bool ssacfg::Stack::dup(StackSlot const& _slot, bool _generateInstruction)
+{
+	auto const offset = slotIndex(_slot);
+	if (offset)
+		dup(*offset, _generateInstruction);
+	return offset.has_value();
+}
+
 std::optional<size_t> ssacfg::Stack::slotIndex(StackSlot const& _slot) const
 {
 	auto const offset = util::findOffset(m_stack | ranges::views::reverse, _slot);
@@ -81,9 +135,7 @@ void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
 {
 	std::visit(util::GenericVisitor{
 		[&](SSACFG::ValueId _value) {
-			if (auto depth = slotIndex(_slot))
-				dup(*depth);
-			else
+			if (!dup(_slot))
 				push(_value, _cfg);
 		},
 		[&](AbstractAssembly::LabelID _label) {
@@ -95,6 +147,7 @@ void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
 
 void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg)
 {
+	std::cout << fmt::format("Creating exact stack {} from {}", stackToString(_cfg, _target), stackToString(_cfg, m_stack)) << std::endl;
 	// first, remove everything from the stack that occurs more often than what's in the target
 	{
 		auto const sortedStackSlotCounts = [](std::vector<StackSlot> const& _stack)
@@ -146,7 +199,7 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 				yulAssert(currentCount <= targetCount);
 				for (size_t i = 0; i < targetCount - currentCount; ++i)
 				{
-					auto const depth = util::findOffset(m_stack | ranges::views::reverse, slot);
+					auto const depth = slotIndex(slot);
 					yulAssert(depth);
 					dup(*depth);
 				}
@@ -337,8 +390,8 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		_liveOut.end(),
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
-	auto liveOutWithoutOutputs = std::set<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) - _liveOut;
-	m_stack.createExactStack(requiredStackTop + std::vector(liveOutWithoutOutputs.begin(), liveOutWithoutOutputs.end()), m_cfg);
+	auto liveOutWithoutOutputs = std::set<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) - _operation.outputs;
+	m_stack.createExactStack(std::vector(liveOutWithoutOutputs.begin(), liveOutWithoutOutputs.end()) + requiredStackTop, m_cfg);
 	std::visit(util::GenericVisitor {
 		[&](SSACFG::BuiltinCall const& _builtin) {
 			m_assembly.setSourceLocation(originLocationOf(_builtin));

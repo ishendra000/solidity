@@ -61,6 +61,7 @@ public:
 	void pop(bool _generateInstruction = true);
 	void swap(size_t _depth, bool _generateInstruction = true);
 	void dup(size_t _depth, bool _generateInstruction = true);
+	bool dup(StackSlot const& _slot, bool _generateInstruction = true);
 	void bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg);
 
 	std::optional<size_t> slotIndex(StackSlot const& _slot) const;
