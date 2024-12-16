@@ -179,19 +179,17 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 			auto findIt = stackCounts.find(slot);
 			if (findIt == stackCounts.end())
 			{
-				std::visit(util::GenericVisitor{
-					[&](SSACFG::ValueId const& _value) {
-						auto const& info = _cfg.valueInfo(_value);
-						yulAssert(std::holds_alternative<SSACFG::LiteralValue>(info), "Target contained a slot that wasn't in the stack and not a label reference or a literal value.");
-						m_assembly.get().appendConstant(std::get<SSACFG::LiteralValue>(info).value);
-						m_stack.emplace_back(_value);
-					},
-					[this](AbstractAssembly::LabelID const& _label)
-					{
-						m_assembly.get().appendLabelReference(_label);
-						m_stack.emplace_back(_label);
-					}
-				}, slot);
+				for (size_t i = 0; i < targetCount; ++i)
+					std::visit(util::GenericVisitor{
+						[&](SSACFG::ValueId const& _value) {
+							push(_value, _cfg);
+						},
+						[this](AbstractAssembly::LabelID const& _label)
+						{
+							m_assembly.get().appendLabelReference(_label);
+							m_stack.emplace_back(_label);
+						}
+					}, slot);
 			}
 			else
 			{
@@ -217,13 +215,16 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 			if (depth > 0)
 				swap(*depth);
 			yulAssert(m_stack.back() == _target[i]);
-			swap(m_stack.size() - 1);
+			swap(m_stack.size() - 1 - i);
 		}
-		yulAssert(m_stack[i] == _target[i]);
+		yulAssert(
+			m_stack[i] == _target[i],
+			fmt::format("Stack target mismatch: current[{}] = {} =/= {} = target[{}]", i, stackSlotToString(_cfg, m_stack[i]), stackSlotToString(_cfg, _target[i]), i)
+		);
 	}
 
 	yulAssert(size() == _target.size());
-	yulAssert(m_stack == _target);
+	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(_cfg, m_stack), stackToString(_cfg, _target)));
 }
 
 std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
