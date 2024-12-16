@@ -57,10 +57,13 @@ public:
 
 	void createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg);
 
-	void pop();
-	void swap(size_t _depth);
-	void dup(size_t _depth);
+	void push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool _generateInstruction = true);
+	void pop(bool _generateInstruction = true);
+	void swap(size_t _depth, bool _generateInstruction = true);
+	void dup(size_t _depth, bool _generateInstruction = true);
 	void bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg);
+
+	std::optional<size_t> slotIndex(StackSlot const& _slot) const;
 private:
 	std::reference_wrapper<AbstractAssembly> m_assembly;
 	std::vector<StackSlot> m_stack;

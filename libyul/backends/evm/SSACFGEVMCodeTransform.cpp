@@ -31,45 +31,60 @@
 
 using namespace solidity::yul;
 
-void ssacfg::Stack::pop()
+void ssacfg::Stack::pop(bool _generateInstruction)
 {
 	yulAssert(!m_stack.empty());
 	m_stack.pop_back();
-	m_assembly.get().appendInstruction(evmasm::Instruction::POP);
+	if (_generateInstruction)
+		m_assembly.get().appendInstruction(evmasm::Instruction::POP);
 }
 
-void ssacfg::Stack::swap(size_t const _depth)
+void ssacfg::Stack::swap(size_t const _depth, bool _generateInstruction)
 {
 	yulAssert(m_stack.size() > _depth);
 	std::swap(m_stack[m_stack.size() - _depth - 1], m_stack.back());
-	m_assembly.get().appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(_depth)));
+	if (_generateInstruction)
+		m_assembly.get().appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(_depth)));
 }
 
-void ssacfg::Stack::dup(size_t const _depth)
+void ssacfg::Stack::push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool _generateInstruction)
+{
+	std::visit(util::GenericVisitor{
+		[](SSACFG::UnreachableValue const&) { solAssert(false); },
+		[](SSACFG::VariableValue const&) { solAssert(false); },
+		[](SSACFG::PhiValue const&) { solAssert(false); },
+		[&](SSACFG::LiteralValue const& _literal) {
+			m_stack.emplace_back(_value);
+			if (_generateInstruction)
+				m_assembly.get().appendConstant(_literal.value);
+		}
+	}, _cfg.valueInfo(_value));
+}
+
+void ssacfg::Stack::dup(size_t const _depth, bool _generateInstruction)
 {
 	m_stack.push_back(m_stack[m_stack.size() - _depth - 1]);
-	m_assembly.get().appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(_depth)));
+	if (_generateInstruction)
+		m_assembly.get().appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(_depth + 1)));
 }
+
+std::optional<size_t> ssacfg::Stack::slotIndex(StackSlot const& _slot) const
+{
+	auto const offset = util::findOffset(m_stack | ranges::views::reverse, _slot);
+	if (offset)
+		yulAssert(m_stack[m_stack.size() - *offset - 1] == _slot);
+	return offset;
+}
+
 
 void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
 {
 	std::visit(util::GenericVisitor{
 		[&](SSACFG::ValueId _value) {
-			if (auto depth = util::findOffset(m_stack | ranges::views::reverse, _slot))
-			{
-				m_assembly.get().appendInstruction(evmasm::dupInstruction(static_cast<unsigned>(*depth + 1)));
-				m_stack.emplace_back(_slot);
-				return;
-			}
-			std::visit(util::GenericVisitor{
-				[&](SSACFG::UnreachableValue const&) { solAssert(false); },
-				[&](SSACFG::VariableValue const&) { solAssert(false); },
-				[&](SSACFG::PhiValue const&) { solAssert(false); },
-				[&](SSACFG::LiteralValue const& _literal) {
-					m_assembly.get().appendConstant(_literal.value);
-					m_stack.emplace_back(_value);
-				}
-			}, _cfg.valueInfo(_value));
+			if (auto depth = slotIndex(_slot))
+				dup(*depth);
+			else
+				push(_value, _cfg);
 		},
 		[&](AbstractAssembly::LabelID _label) {
 			m_assembly.get().appendLabelReference(_label);
@@ -157,7 +172,6 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 	yulAssert(size() == _target.size());
 	yulAssert(m_stack == _target);
 }
-
 
 std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 	AbstractAssembly& _assembly,
@@ -323,5 +337,30 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		_liveOut.end(),
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
-	m_stack.createExactStack(std::vector<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) + requiredStackTop, m_cfg);
+	auto liveOutWithoutOutputs = std::set<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) - _liveOut;
+	m_stack.createExactStack(requiredStackTop + std::vector(liveOutWithoutOutputs.begin(), liveOutWithoutOutputs.end()), m_cfg);
+	std::visit(util::GenericVisitor {
+		[&](SSACFG::BuiltinCall const& _builtin) {
+			m_assembly.setSourceLocation(originLocationOf(_builtin));
+			dynamic_cast<BuiltinFunctionForEVM const&>(_builtin.builtin.get()).generateCode(
+				_builtin.call,
+				m_assembly,
+				m_builtinContext
+			);
+		},
+		[&](SSACFG::Call const& _call) {
+			m_assembly.setSourceLocation(originLocationOf(_call));
+			m_assembly.appendJumpTo(
+				functionLabel(_call.function),
+				static_cast<int>(_call.function.get().numReturns - _call.function.get().numArguments) - (_call.canContinue ? 1 : 0),
+				AbstractAssembly::JumpType::IntoFunction
+			);
+			if (returnLabel)
+				m_assembly.appendLabel(*returnLabel);
+	   },
+	}, _operation.kind);
+	for (size_t i = 0; i < _operation.inputs.size() + (returnLabel ? 1 : 0); ++i)
+		m_stack.pop(false);
+	for (auto value: _operation.outputs)
+		m_stack.push(value, m_cfg, false);
 }
