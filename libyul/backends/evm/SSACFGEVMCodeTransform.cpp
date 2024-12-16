@@ -49,16 +49,16 @@ void ssacfg::Stack::swap(size_t const _depth, bool _generateInstruction)
 
 void ssacfg::Stack::push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool _generateInstruction)
 {
-	std::visit(util::GenericVisitor{
-		[](SSACFG::UnreachableValue const&) { solAssert(false); },
-		[](SSACFG::VariableValue const&) { solAssert(false); },
-		[](SSACFG::PhiValue const&) { solAssert(false); },
-		[&](SSACFG::LiteralValue const& _literal) {
-			m_stack.emplace_back(_value);
-			if (_generateInstruction)
+	m_stack.emplace_back(_value);
+	if (_generateInstruction)
+		std::visit(util::GenericVisitor{
+			[](SSACFG::UnreachableValue const&) { solAssert(false); },
+			[](SSACFG::VariableValue const&) { solAssert(false); },
+			[](SSACFG::PhiValue const&) { solAssert(false); },
+			[&](SSACFG::LiteralValue const& _literal) {
 				m_assembly.get().appendConstant(_literal.value);
-		}
-	}, _cfg.valueInfo(_value));
+			}
+		}, _cfg.valueInfo(_value));
 }
 
 void ssacfg::Stack::dup(size_t const _depth, bool _generateInstruction)
