@@ -77,6 +77,22 @@ std::string stackToString(SSACFG const& _cfg, std::vector<ssacfg::StackSlot> con
 }
 }
 
+std::vector<ssacfg::StackSlot>
+ssacfg::PhiMapping::transformStackToPhiValues(std::vector<StackSlot> const& _stack) const
+{
+	auto const map = [this](StackSlot const& _slot)
+	{
+		if (auto* valueId = std::get_if<SSACFG::ValueId>(&_slot))
+		{
+			auto const it = m_reverseMapping.find(*valueId);
+			return it == m_reverseMapping.end() ? _slot : it->second;
+		}
+		return _slot;
+	};
+	return _stack | ranges::views::transform(map) | ranges::to<std::vector>;
+}
+
+
 void ssacfg::Stack::pop(bool _generateInstruction)
 {
 	yulAssert(!m_stack.empty());
@@ -145,20 +161,40 @@ void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
 	}, _slot);
 }
 
+void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg, PhiMapping const& _phis)
+{
+	auto const mappedTarget = _phis.transformStackToPhiValues(_target);
+	auto mappedStack = Stack(m_assembly, _phis.transformStackToPhiValues(m_stack));
+	mappedStack.createExactStack(_target, _cfg);
+	// now we go through the mapped stack and undo the phi mapping where required
+	for (size_t i = 0; i < mappedStack.size(); ++i)
+	{
+		if (mappedStack.m_stack[i] != _target[i])
+		{
+			yulAssert(std::holds_alternative<SSACFG::ValueId>(mappedStack.m_stack[i]));
+			mappedStack.m_stack[i] = _phis.apply(std::get<SSACFG::ValueId>(mappedStack.m_stack[i]));
+			yulAssert(mappedStack.m_stack[i] == _target[i]);
+		}
+	}
+	m_stack = mappedStack.m_stack;
+	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(_cfg, m_stack), stackToString(_cfg, _target)));
+}
+
 void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg)
 {
 	std::cout << fmt::format("Creating exact stack {} from {}", stackToString(_cfg, _target), stackToString(_cfg, m_stack)) << std::endl;
-	// first, remove everything from the stack that occurs more often than what's in the target
+
 	{
-		auto const sortedStackSlotCounts = [](std::vector<StackSlot> const& _stack)
+		auto const histogram = [](std::vector<StackSlot> const& _stack)
 		{
 			std::map<StackSlot, size_t> counts;
 			for (auto const& targetSlot : _stack)
 				counts[targetSlot]++;
 			return counts;
 		};
-		auto const targetCounts = sortedStackSlotCounts(_target);
-		auto const stackCounts = sortedStackSlotCounts(m_stack);
+		auto const targetCounts = histogram(_target);
+		auto const stackCounts = histogram(m_stack);
+		// first, remove everything from the stack that occurs more often than what's in the target
 		for (auto const& [slot, count]: stackCounts)
 		{
 			size_t targetCount = 0;
@@ -174,6 +210,7 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 					pop();
 				}
 		}
+		// then dup/push stuff that's not there yet in appropriate quantities
 		for (auto const& [slot, targetCount]: targetCounts)
 		{
 			auto findIt = stackCounts.find(slot);
@@ -251,7 +288,7 @@ std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 
 	// Force main entry block to start from an empty stack.
 	mainCodeTransform.blockData(SSACFG::BlockId{0}).stackIn = std::make_optional<std::vector<ssacfg::StackSlot>>();
-	mainCodeTransform(SSACFG::BlockId{0});
+	mainCodeTransform(SSACFG::BlockId{0}, std::nullopt);
 
 	std::vector<StackTooDeepError> stackErrors;
 	if (!mainCodeTransform.m_stackErrors.empty())
@@ -331,13 +368,15 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 	// Force function entry block to start from initial function layout.
 	m_assembly.appendLabel(functionLabel(_function));
 	blockData(m_cfg.entry).stackIn = m_cfg.arguments | ranges::views::transform([](auto&& _tuple) { return std::get<1>(_tuple); }) | ranges::to<std::vector<ssacfg::StackSlot>>;
-	(*this)(m_cfg.entry);
+	(*this)(m_cfg.entry, std::nullopt);
 }
 
-void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
+void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optional<SSACFG::BlockId> _predecessor)
 {
 	yulAssert(!m_generatedBlocks[_block.value]);
 	m_generatedBlocks[_block.value] = true;
+
+	ScopedSaveAndRestore stackSave{m_stack, ssacfg::Stack{m_assembly}};
 
 	auto &data = blockData(_block);
 	if (!data.label) {
@@ -348,6 +387,10 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 	{
 		// copy stackIn into stack
 		yulAssert(data.stackIn, fmt::format("No starting layout for block id {}", _block.value));
+		if (_predecessor)
+		{
+			// todo apply phis (or do i even have to!?) i dont think so actually
+		}
 		m_stack = ssacfg::Stack{m_assembly, *data.stackIn};
 	}
 
@@ -363,6 +406,40 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 		[&](SSACFG::BasicBlock::MainExit const& /*_mainExit*/)
 		{
 			m_assembly.appendInstruction(evmasm::Instruction::STOP);
+		},
+		[&](SSACFG::BasicBlock::Jump const& _jump)
+		{
+			auto& targetLabel = blockData(_jump.target).label;
+			if (!targetLabel)
+				targetLabel = m_assembly.newLabelId();
+			auto& targetStack = blockData(_jump.target).stackIn;
+			if (!targetStack)
+				// initial stack layout is just the live-ins (would also suffice to be the stack top)
+				targetStack = m_liveness.liveIn(_jump.target) | ranges::to<std::vector<ssacfg::StackSlot>>;
+
+			m_stack.createExactStack(*targetStack, m_cfg, ssacfg::PhiMapping{m_cfg, _block, _jump.target});
+
+			// reference: https://github.com/ethereum/solidity/blob/ssaCfg-codegen/libyul/backends/evm/SSAEVMCodeTransform.cpp
+			// assumption: results of phi fcts are always in the live-in of the corresponding block
+			//	-> generate stack layout with the phi functions somewhere on stack
+			//  -> when entering a block, we record the predecessor and replace all phis with the actual values
+			//		this can happen in the operator()(blockid, predecessor block id) function call
+			//  -> stack layout when entering a block should always be [phis, rest of live-in, junk]
+			/*if (!targetStack)
+
+			else
+				yulAssert(false, "todo we already have a target stack, need to modify it to the current one");*/
+			/*if (targetStack)
+				m_stack.createExactStack();
+				createExactStack(targetStackToCurrentStack(_jump.target));
+			else
+			{
+				cleanUpStack();
+				targetStack = currentStackToTargetStack(_jump.target);
+			}*/
+			m_assembly.appendJumpTo(*targetLabel);
+			if (!m_generatedBlocks[_jump.target.value])
+				(*this)(_jump.target, _block);
 		},
 		[](auto const&)
 		{

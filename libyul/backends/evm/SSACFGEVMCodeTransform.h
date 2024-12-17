@@ -43,6 +43,35 @@ struct StackLayout;
 namespace ssacfg
 {
 using StackSlot = std::variant<SSACFG::ValueId, AbstractAssembly::LabelID>;
+class PhiMapping
+{
+public:
+	PhiMapping() = default;
+	PhiMapping(SSACFG const& _cfg, SSACFG::BlockId _from, SSACFG::BlockId _to)
+	{
+		auto const argIndex = _cfg.phiArgumentIndex(_from, _to);
+		auto const& phis = _cfg.block(_to).phis;
+		for (auto const& phiId: phis)
+		{
+			auto const& phiInfo = _cfg.valueInfo(phiId);
+			yulAssert(std::holds_alternative<SSACFG::PhiValue>(phiInfo));
+			auto const& phi = std::get<SSACFG::PhiValue>(phiInfo);
+			m_mapping[phi.arguments[argIndex]] = phiId;
+			m_reverseMapping[phiId] = phi.arguments[argIndex];
+		}
+	}
+
+	std::vector<StackSlot> transformStackToPhiValues(std::vector<StackSlot> const& _stack) const;
+	SSACFG::ValueId apply(SSACFG::ValueId const _valueId) const
+	{
+		auto const it = m_mapping.find(_valueId);
+		return it == m_mapping.end() ? _valueId : it->second;
+	}
+
+private:
+	std::map<SSACFG::ValueId, SSACFG::ValueId> m_mapping;
+	std::map<SSACFG::ValueId, SSACFG::ValueId> m_reverseMapping;
+};
 class Stack
 {
 public:
@@ -56,6 +85,7 @@ public:
 	size_t size() const { return m_stack.size(); }
 
 	void createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg);
+	void createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg, PhiMapping const& _phis);
 
 	void push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool _generateInstruction = true);
 	void pop(bool _generateInstruction = true);
@@ -110,7 +140,7 @@ private:
 
 	void transformFunction(Scope::Function const& _function);
 
-	void operator()(SSACFG::BlockId _block);
+	void operator()(SSACFG::BlockId _block, std::optional<SSACFG::BlockId> _predecessor);
 	void operator()(SSACFG::Operation const& _operation, std::set<SSACFG::ValueId> const& _liveOut);
 
 	BlockData& blockData(SSACFG::BlockId const _block) { return m_blockData[_block.value]; }
