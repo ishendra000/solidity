@@ -165,7 +165,7 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 {
 	auto const mappedTarget = _phis.transformStackToPhiValues(_target);
 	auto mappedStack = Stack(m_assembly, _phis.transformStackToPhiValues(m_stack));
-	mappedStack.createExactStack(_target, _cfg);
+	mappedStack.createExactStack(mappedTarget, _cfg);
 	// now we go through the mapped stack and undo the phi mapping where required
 	for (size_t i = 0; i < mappedStack.size(); ++i)
 	{
@@ -440,6 +440,36 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optio
 			m_assembly.appendJumpTo(*targetLabel);
 			if (!m_generatedBlocks[_jump.target.value])
 				(*this)(_jump.target, _block);
+		},
+		[&](SSACFG::BasicBlock::ConditionalJump const& _conditionalJump)
+		{
+			auto& nonZeroLayout = blockData(_conditionalJump.nonZero).stackIn;
+			auto& nonZeroLabel = blockData(_conditionalJump.nonZero).label;
+			if (!nonZeroLabel)
+				nonZeroLabel = m_assembly.newLabelId();
+			auto& zeroLayout = blockData(_conditionalJump.zero).stackIn;
+			auto& zeroLabel = blockData(_conditionalJump.zero).label;
+			if (!zeroLabel)
+				zeroLabel = m_assembly.newLabelId();
+			if (!nonZeroLayout)
+				nonZeroLayout = m_liveness.liveIn(_conditionalJump.nonZero) | ranges::to<std::vector<ssacfg::StackSlot>>;
+			if (!zeroLayout)
+				zeroLayout = m_liveness.liveIn(_conditionalJump.zero) | ranges::to<std::vector<ssacfg::StackSlot>>;
+			m_stack.createExactStack(
+				*nonZeroLayout + std::vector<ssacfg::StackSlot>{_conditionalJump.condition},
+				m_cfg
+			);
+
+			// Emit the conditional jump to the non-zero label and update the stored stack.
+			m_assembly.appendJumpToIf(*nonZeroLabel);
+			m_stack.pop(false);
+
+			m_stack.createExactStack(*zeroLayout, m_cfg, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
+			m_assembly.appendJumpTo(*zeroLabel);
+			if (!m_generatedBlocks[_conditionalJump.zero.value])
+				(*this)(_conditionalJump.zero, _block);
+			if (!m_generatedBlocks[_conditionalJump.nonZero.value])
+				(*this)(_conditionalJump.nonZero, _block);
 		},
 		[](auto const&)
 		{
