@@ -381,8 +381,8 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optio
 	auto &data = blockData(_block);
 	if (!data.label) {
 		data.label = m_assembly.newLabelId();
-		m_assembly.appendLabel(*data.label);
 	}
+	m_assembly.appendLabel(*data.label);
 
 	{
 		// copy stackIn into stack
