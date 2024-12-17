@@ -288,7 +288,7 @@ std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 
 	// Force main entry block to start from an empty stack.
 	mainCodeTransform.blockData(SSACFG::BlockId{0}).stackIn = std::make_optional<std::vector<ssacfg::StackSlot>>();
-	mainCodeTransform(SSACFG::BlockId{0}, std::nullopt);
+	mainCodeTransform(SSACFG::BlockId{0});
 
 	std::vector<StackTooDeepError> stackErrors;
 	if (!mainCodeTransform.m_stackErrors.empty())
@@ -368,10 +368,10 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 	// Force function entry block to start from initial function layout.
 	m_assembly.appendLabel(functionLabel(_function));
 	blockData(m_cfg.entry).stackIn = m_cfg.arguments | ranges::views::transform([](auto&& _tuple) { return std::get<1>(_tuple); }) | ranges::to<std::vector<ssacfg::StackSlot>>;
-	(*this)(m_cfg.entry, std::nullopt);
+	(*this)(m_cfg.entry);
 }
 
-void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optional<SSACFG::BlockId> _predecessor)
+void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 {
 	yulAssert(!m_generatedBlocks[_block.value]);
 	m_generatedBlocks[_block.value] = true;
@@ -387,10 +387,6 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optio
 	{
 		// copy stackIn into stack
 		yulAssert(data.stackIn, fmt::format("No starting layout for block id {}", _block.value));
-		if (_predecessor)
-		{
-			// todo apply phis (or do i even have to!?) i dont think so actually
-		}
 		m_stack = ssacfg::Stack{m_assembly, *data.stackIn};
 	}
 
@@ -439,7 +435,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optio
 			}*/
 			m_assembly.appendJumpTo(*targetLabel);
 			if (!m_generatedBlocks[_jump.target.value])
-				(*this)(_jump.target, _block);
+				(*this)(_jump.target);
 		},
 		[&](SSACFG::BasicBlock::ConditionalJump const& _conditionalJump)
 		{
@@ -467,9 +463,9 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block, std::optio
 			m_stack.createExactStack(*zeroLayout, m_cfg, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
 			m_assembly.appendJumpTo(*zeroLabel);
 			if (!m_generatedBlocks[_conditionalJump.zero.value])
-				(*this)(_conditionalJump.zero, _block);
+				(*this)(_conditionalJump.zero);
 			if (!m_generatedBlocks[_conditionalJump.nonZero.value])
-				(*this)(_conditionalJump.nonZero, _block);
+				(*this)(_conditionalJump.nonZero);
 		},
 		[](auto const&)
 		{
