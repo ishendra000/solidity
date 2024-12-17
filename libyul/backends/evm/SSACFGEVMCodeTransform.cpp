@@ -26,6 +26,7 @@
 #include <libsolutil/Visitor.h>
 
 #include <range/v3/range/conversion.hpp>
+#include <range/v3/view/drop_exactly.hpp>
 #include <range/v3/view/enumerate.hpp>
 #include <range/v3/view/iota.hpp>
 #include <range/v3/view/reverse.hpp>
@@ -179,6 +180,17 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 	m_stack = mappedStack.m_stack;
 	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(_cfg, m_stack), stackToString(_cfg, _target)));
 }
+
+bool ssacfg::Stack::empty() const
+{
+	return m_stack.empty();
+}
+
+void ssacfg::Stack::clear()
+{
+	m_stack.clear();
+}
+
 
 void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg)
 {
@@ -414,25 +426,6 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 				targetStack = m_liveness.liveIn(_jump.target) | ranges::to<std::vector<ssacfg::StackSlot>>;
 
 			m_stack.createExactStack(*targetStack, m_cfg, ssacfg::PhiMapping{m_cfg, _block, _jump.target});
-
-			// reference: https://github.com/ethereum/solidity/blob/ssaCfg-codegen/libyul/backends/evm/SSAEVMCodeTransform.cpp
-			// assumption: results of phi fcts are always in the live-in of the corresponding block
-			//	-> generate stack layout with the phi functions somewhere on stack
-			//  -> when entering a block, we record the predecessor and replace all phis with the actual values
-			//		this can happen in the operator()(blockid, predecessor block id) function call
-			//  -> stack layout when entering a block should always be [phis, rest of live-in, junk]
-			/*if (!targetStack)
-
-			else
-				yulAssert(false, "todo we already have a target stack, need to modify it to the current one");*/
-			/*if (targetStack)
-				m_stack.createExactStack();
-				createExactStack(targetStackToCurrentStack(_jump.target));
-			else
-			{
-				cleanUpStack();
-				targetStack = currentStackToTargetStack(_jump.target);
-			}*/
 			m_assembly.appendJumpTo(*targetLabel);
 			if (!m_generatedBlocks[_jump.target.value])
 				(*this)(_jump.target);
@@ -467,9 +460,33 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 			if (!m_generatedBlocks[_conditionalJump.nonZero.value])
 				(*this)(_conditionalJump.nonZero);
 		},
+		[&](SSACFG::BasicBlock::JumpTable const&){ yulAssert(false, "Jump tables not yet implemented."); },
+		[&](SSACFG::BasicBlock::FunctionReturn const& _return){
+			// Need to be able to also swap up return label!
+			yulAssert(static_cast<size_t>(m_assembly.stackHeight()) == m_stack.size());
+			m_assembly.setStackHeight(static_cast<int>(m_stack.size()) + 1);
+			if (_return.returnValues.empty())
+				while (!m_stack.empty())
+					m_stack.pop();
+			else
+			{
+				auto targetStack = _return.returnValues | ranges::views::drop_exactly(1) | ranges::to<std::vector<ssacfg::StackSlot>>;
+				targetStack.emplace_back(_return.returnValues.front());
+				m_stack.createExactStack(targetStack, m_cfg);
+				// Swap up return label.
+				m_assembly.appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(targetStack.size())));
+			}
+			m_assembly.appendJump(0, AbstractAssembly::JumpType::OutOfFunction);
+			m_stack.clear();
+		},
+		[&](SSACFG::BasicBlock::Terminated const&){
+			// TODO: assert that last instruction terminated.
+			// To be sure just emit another INVALID - should be removed by optimizer.
+			m_assembly.appendInstruction(evmasm::Instruction::INVALID);
+		},
 		[](auto const&)
 		{
-			yulAssert(false, "unhandled");
+			yulAssert(false, "unhandled case");
 		}
 	};
 	std::visit(exitVisitor, m_cfg.block(_block).exit);
