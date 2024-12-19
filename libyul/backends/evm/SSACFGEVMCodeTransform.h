@@ -61,6 +61,7 @@ public:
 		}
 	}
 
+	bool empty() const { return m_mapping.empty(); }
 	std::vector<StackSlot> transformStackToPhiValues(std::vector<StackSlot> const& _stack) const;
 	SSACFG::ValueId apply(SSACFG::ValueId const _valueId) const
 	{
@@ -89,6 +90,12 @@ public:
 
 	void createStack(std::vector<StackSlot> const& _top, std::vector<StackSlot> const& _rest, PhiMapping const& _phis = {});
 
+	StackSlot const& top() const
+	{
+		yulAssert(!empty(), "empty stack");
+		return m_stack.back();
+	}
+
 	void push(SSACFG::ValueId const& _value, bool _generateInstruction = true);
 	void pop(bool _generateInstruction = true);
 	void swap(size_t _depth, bool _generateInstruction = true);
@@ -97,6 +104,8 @@ public:
 	bool empty() const;
 	void clear();
 	void bringUpSlot(StackSlot const& _slot);
+
+	std::vector<StackSlot> const& data() const { return m_stack; }
 
 	std::optional<size_t> slotIndex(StackSlot const& _slot) const;
 private:

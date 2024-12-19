@@ -164,6 +164,12 @@ void ssacfg::Stack::bringUpSlot(StackSlot const& _slot)
 
 void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, PhiMapping const& _phis)
 {
+	if (_phis.empty())
+	{
+		createExactStack(_target);
+		return;
+	}
+
 	auto const mappedTarget = _phis.transformStackToPhiValues(_target);
 	auto mappedStack = Stack(m_assembly, m_cfg.get(), _phis.transformStackToPhiValues(m_stack));
 	mappedStack.createExactStack(mappedTarget);
@@ -178,7 +184,22 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, PhiM
 		}
 	}
 	m_stack = mappedStack.m_stack;
-	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(m_cfg.get(), m_stack), stackToString(m_cfg.get(), _target)));
+	yulAssert(
+		m_stack == _target,
+		fmt::format(
+			"Stack target mismatch: current = {} =/= {} = target",
+			stackToString(m_cfg.get(), m_stack),
+			stackToString(m_cfg.get(), _target)
+		)
+	);
+}
+void ssacfg::Stack::createStack(
+	std::vector<StackSlot> const& _top,
+	std::vector<StackSlot> const& _rest,
+	PhiMapping const& _phis
+)
+{
+	createExactStack(_rest + _top, _phis);
 }
 
 bool ssacfg::Stack::empty() const
@@ -376,7 +397,6 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 
 void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 {
-	std::cout << "\tGenerating for Block " << _block.value << std::endl;
 	yulAssert(!m_generatedBlocks[_block.value]);
 	m_generatedBlocks[_block.value] = true;
 
@@ -388,6 +408,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 	}
 	m_assembly.appendLabel(*data.label);
 
+	std::cout << "\tGenerating for Block " << _block.value << " with label " << data.label.value() << std::endl;
 	{
 		// copy stackIn into stack
 		yulAssert(data.stackIn, fmt::format("No starting layout for block id {}", _block.value));
@@ -437,17 +458,16 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 			if (!zeroLayout)
 				zeroLayout = m_liveness.liveIn(_conditionalJump.zero) | ranges::to<std::vector<ssacfg::StackSlot>>;
 			auto const liveOut = m_liveness.liveOut(_block) | ranges::to<std::vector<ssacfg::StackSlot>>;
-			m_stack.createExactStack(
-				liveOut + *nonZeroLayout + std::vector<ssacfg::StackSlot>{_conditionalJump.condition},
-				ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.nonZero}
-			);
+			m_stack.createStack(*nonZeroLayout + std::vector{ssacfg::StackSlot{_conditionalJump.condition}}, liveOut, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.nonZero});
+			yulAssert(m_stack.top() == ssacfg::StackSlot{_conditionalJump.condition});
 
 			// Emit the conditional jump to the non-zero label and update the stored stack.
 			m_assembly.appendJumpToIf(*nonZeroLabel);
 			m_stack.pop(false);
 
-			m_stack.createExactStack(*zeroLayout, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
+			m_stack.createStack(*zeroLayout, liveOut, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
 			m_assembly.appendJumpTo(*zeroLabel);
+
 			if (!m_generatedBlocks[_conditionalJump.zero.value])
 				(*this)(_conditionalJump.zero);
 			if (!m_generatedBlocks[_conditionalJump.nonZero.value])
@@ -497,17 +517,17 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		}
 	// todo sort by inverse order of occurrence
 	requiredStackTop += _operation.inputs;
-	// literals should have been pulled out
-	// todo double check and document reason!
+	// literals should have been pulled out a priori and now are treated as push constants
 	yulAssert(std::none_of(
 		_liveOut.begin(),
 		_liveOut.end(),
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
 	auto liveOutWithoutOutputs = std::set<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) - _operation.outputs;
-	m_stack.createExactStack(std::vector(liveOutWithoutOutputs.begin(), liveOutWithoutOutputs.end()) + requiredStackTop);
+	m_stack.createStack(requiredStackTop, liveOutWithoutOutputs | ranges::to<std::vector>);
 	std::visit(util::GenericVisitor {
 		[&](SSACFG::BuiltinCall const& _builtin) {
+			std::cout << "\t\t\tBuiltin call: " << _builtin.builtin.get().name << ": " << stackToString(m_cfg, m_stack.data()) << std::endl;
 			m_assembly.setSourceLocation(originLocationOf(_builtin));
 			dynamic_cast<BuiltinFunctionForEVM const&>(_builtin.builtin.get()).generateCode(
 				_builtin.call,
@@ -516,6 +536,10 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 			);
 		},
 		[&](SSACFG::Call const& _call) {
+			std::cout << "\t\t\tCall: " << _call.function.get().name.str() << " (label=" << functionLabel(_call.function) << ")" << ": " << stackToString(m_cfg, m_stack.data());
+			if (returnLabel)
+				std::cout << ", returnLabel: " << *returnLabel;
+			std::cout << std::endl;
 			m_assembly.setSourceLocation(originLocationOf(_call));
 			m_assembly.appendJumpTo(
 				functionLabel(_call.function),
