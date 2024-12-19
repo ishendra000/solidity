@@ -110,7 +110,7 @@ void ssacfg::Stack::swap(size_t const _depth, bool _generateInstruction)
 		m_assembly.get().appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(_depth)));
 }
 
-void ssacfg::Stack::push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool _generateInstruction)
+void ssacfg::Stack::push(SSACFG::ValueId const& _value, bool _generateInstruction)
 {
 	m_stack.emplace_back(_value);
 	if (_generateInstruction)
@@ -121,7 +121,7 @@ void ssacfg::Stack::push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool
 			[&](SSACFG::LiteralValue const& _literal) {
 				m_assembly.get().appendConstant(_literal.value);
 			}
-		}, _cfg.valueInfo(_value));
+		}, m_cfg.get().valueInfo(_value));
 }
 
 void ssacfg::Stack::dup(size_t const _depth, bool _generateInstruction)
@@ -148,12 +148,12 @@ std::optional<size_t> ssacfg::Stack::slotIndex(StackSlot const& _slot) const
 }
 
 
-void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
+void ssacfg::Stack::bringUpSlot(StackSlot const& _slot)
 {
 	std::visit(util::GenericVisitor{
 		[&](SSACFG::ValueId _value) {
 			if (!dup(_slot))
-				push(_value, _cfg);
+				push(_value);
 		},
 		[&](AbstractAssembly::LabelID _label) {
 			m_assembly.get().appendLabelReference(_label);
@@ -162,11 +162,11 @@ void ssacfg::Stack::bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg)
 	}, _slot);
 }
 
-void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg, PhiMapping const& _phis)
+void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, PhiMapping const& _phis)
 {
 	auto const mappedTarget = _phis.transformStackToPhiValues(_target);
-	auto mappedStack = Stack(m_assembly, _phis.transformStackToPhiValues(m_stack));
-	mappedStack.createExactStack(mappedTarget, _cfg);
+	auto mappedStack = Stack(m_assembly, m_cfg.get(), _phis.transformStackToPhiValues(m_stack));
+	mappedStack.createExactStack(mappedTarget);
 	// now we go through the mapped stack and undo the phi mapping where required
 	for (size_t i = 0; i < mappedStack.size(); ++i)
 	{
@@ -178,7 +178,7 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 		}
 	}
 	m_stack = mappedStack.m_stack;
-	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(_cfg, m_stack), stackToString(_cfg, _target)));
+	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(m_cfg.get(), m_stack), stackToString(m_cfg.get(), _target)));
 }
 
 bool ssacfg::Stack::empty() const
@@ -192,9 +192,9 @@ void ssacfg::Stack::clear()
 }
 
 
-void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg)
+void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target)
 {
-	std::cout << fmt::format("Creating exact stack {} from {}", stackToString(_cfg, _target), stackToString(_cfg, m_stack)) << std::endl;
+	std::cout << fmt::format("\t\tCreating exact stack {} -> {}", stackToString(m_cfg.get(), m_stack), stackToString(m_cfg.get(), _target)) << std::endl;
 
 	{
 		auto const histogram = [](std::vector<StackSlot> const& _stack)
@@ -227,19 +227,8 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 		{
 			auto findIt = stackCounts.find(slot);
 			if (findIt == stackCounts.end())
-			{
 				for (size_t i = 0; i < targetCount; ++i)
-					std::visit(util::GenericVisitor{
-						[&](SSACFG::ValueId const& _value) {
-							push(_value, _cfg);
-						},
-						[this](AbstractAssembly::LabelID const& _label)
-						{
-							m_assembly.get().appendLabelReference(_label);
-							m_stack.emplace_back(_label);
-						}
-					}, slot);
-			}
+					bringUpSlot(slot);
 			else
 			{
 				auto currentCount = std::min(targetCount, findIt->second);
@@ -268,12 +257,12 @@ void ssacfg::Stack::createExactStack(std::vector<StackSlot> const& _target, SSAC
 		}
 		yulAssert(
 			m_stack[i] == _target[i],
-			fmt::format("Stack target mismatch: current[{}] = {} =/= {} = target[{}]", i, stackSlotToString(_cfg, m_stack[i]), stackSlotToString(_cfg, _target[i]), i)
+			fmt::format("Stack target mismatch: current[{}] = {} =/= {} = target[{}]", i, stackSlotToString(m_cfg.get(), m_stack[i]), stackSlotToString(m_cfg.get(), _target[i]), i)
 		);
 	}
 
 	yulAssert(size() == _target.size());
-	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(_cfg, m_stack), stackToString(_cfg, _target)));
+	yulAssert(m_stack == _target, fmt::format("Stack target mismatch: current = {} =/= {} = target", stackToString(m_cfg.get(), m_stack), stackToString(m_cfg.get(), _target)));
 }
 
 std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
@@ -370,7 +359,7 @@ std::map<Scope::Function const*, AbstractAssembly::LabelID> SSACFGEVMCodeTransfo
 	m_cfg(_cfg),
 	m_liveness(_liveness),
 	m_functionLabels(std::move(_functionLabels)),
-	m_stack(_assembly),
+	m_stack(_assembly, _cfg),
 	m_blockData(_cfg.numBlocks()),
 	m_generatedBlocks(_cfg.numBlocks(), false)
 { }
@@ -378,17 +367,20 @@ std::map<Scope::Function const*, AbstractAssembly::LabelID> SSACFGEVMCodeTransfo
 void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 {
 	// Force function entry block to start from initial function layout.
-	m_assembly.appendLabel(functionLabel(_function));
+	auto const label = functionLabel(_function);
+	std::cout << "Generating code for function " << _function.name.str() << ", label=" << label << std::endl;
+	m_assembly.appendLabel(label);
 	blockData(m_cfg.entry).stackIn = m_cfg.arguments | ranges::views::transform([](auto&& _tuple) { return std::get<1>(_tuple); }) | ranges::to<std::vector<ssacfg::StackSlot>>;
 	(*this)(m_cfg.entry);
 }
 
 void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 {
+	std::cout << "\tGenerating for Block " << _block.value << std::endl;
 	yulAssert(!m_generatedBlocks[_block.value]);
 	m_generatedBlocks[_block.value] = true;
 
-	ScopedSaveAndRestore stackSave{m_stack, ssacfg::Stack{m_assembly}};
+	ScopedSaveAndRestore stackSave{m_stack, ssacfg::Stack{m_assembly, m_cfg}};
 
 	auto &data = blockData(_block);
 	if (!data.label) {
@@ -399,7 +391,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 	{
 		// copy stackIn into stack
 		yulAssert(data.stackIn, fmt::format("No starting layout for block id {}", _block.value));
-		m_stack = ssacfg::Stack{m_assembly, *data.stackIn};
+		m_stack = ssacfg::Stack{m_assembly, m_cfg, *data.stackIn};
 	}
 
 	m_assembly.setStackHeight(static_cast<int>(m_stack.size()));
@@ -425,7 +417,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 				// initial stack layout is just the live-ins (would also suffice to be the stack top)
 				targetStack = m_liveness.liveIn(_jump.target) | ranges::to<std::vector<ssacfg::StackSlot>>;
 
-			m_stack.createExactStack(*targetStack, m_cfg, ssacfg::PhiMapping{m_cfg, _block, _jump.target});
+			m_stack.createExactStack(*targetStack, ssacfg::PhiMapping{m_cfg, _block, _jump.target});
 			m_assembly.appendJumpTo(*targetLabel);
 			if (!m_generatedBlocks[_jump.target.value])
 				(*this)(_jump.target);
@@ -444,16 +436,17 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 				nonZeroLayout = m_liveness.liveIn(_conditionalJump.nonZero) | ranges::to<std::vector<ssacfg::StackSlot>>;
 			if (!zeroLayout)
 				zeroLayout = m_liveness.liveIn(_conditionalJump.zero) | ranges::to<std::vector<ssacfg::StackSlot>>;
+			auto const liveOut = m_liveness.liveOut(_block) | ranges::to<std::vector<ssacfg::StackSlot>>;
 			m_stack.createExactStack(
-				*nonZeroLayout + std::vector<ssacfg::StackSlot>{_conditionalJump.condition},
-				m_cfg
+				liveOut + *nonZeroLayout + std::vector<ssacfg::StackSlot>{_conditionalJump.condition},
+				ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.nonZero}
 			);
 
 			// Emit the conditional jump to the non-zero label and update the stored stack.
 			m_assembly.appendJumpToIf(*nonZeroLabel);
 			m_stack.pop(false);
 
-			m_stack.createExactStack(*zeroLayout, m_cfg, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
+			m_stack.createExactStack(*zeroLayout, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
 			m_assembly.appendJumpTo(*zeroLabel);
 			if (!m_generatedBlocks[_conditionalJump.zero.value])
 				(*this)(_conditionalJump.zero);
@@ -472,7 +465,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 			{
 				auto targetStack = _return.returnValues | ranges::views::drop_exactly(1) | ranges::to<std::vector<ssacfg::StackSlot>>;
 				targetStack.emplace_back(_return.returnValues.front());
-				m_stack.createExactStack(targetStack, m_cfg);
+				m_stack.createExactStack(targetStack);
 				// Swap up return label.
 				m_assembly.appendInstruction(evmasm::swapInstruction(static_cast<unsigned>(targetStack.size())));
 			}
@@ -512,7 +505,7 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 		[this](SSACFG::ValueId _valueId){ return m_cfg.isLiteralValue(_valueId); }
 	));
 	auto liveOutWithoutOutputs = std::set<ssacfg::StackSlot>(_liveOut.begin(), _liveOut.end()) - _operation.outputs;
-	m_stack.createExactStack(std::vector(liveOutWithoutOutputs.begin(), liveOutWithoutOutputs.end()) + requiredStackTop, m_cfg);
+	m_stack.createExactStack(std::vector(liveOutWithoutOutputs.begin(), liveOutWithoutOutputs.end()) + requiredStackTop);
 	std::visit(util::GenericVisitor {
 		[&](SSACFG::BuiltinCall const& _builtin) {
 			m_assembly.setSourceLocation(originLocationOf(_builtin));
@@ -536,5 +529,5 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 	for (size_t i = 0; i < _operation.inputs.size() + (returnLabel ? 1 : 0); ++i)
 		m_stack.pop(false);
 	for (auto value: _operation.outputs)
-		m_stack.push(value, m_cfg, false);
+		m_stack.push(value, false);
 }

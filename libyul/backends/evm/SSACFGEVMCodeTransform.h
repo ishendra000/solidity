@@ -75,8 +75,8 @@ private:
 class Stack
 {
 public:
-	explicit Stack(AbstractAssembly& _assembly, std::vector<StackSlot> const& _initialStack = {}):
-		m_assembly(_assembly), m_stack(_initialStack) {}
+	explicit Stack(AbstractAssembly& _assembly, SSACFG const& _cfg, std::vector<StackSlot> const& _initialStack = {}):
+		m_assembly(_assembly), m_cfg(_cfg), m_stack(_initialStack) {}
 	Stack(Stack const&) = default;
 	Stack(Stack&&) = default;
 	Stack& operator=(Stack const&) = default;
@@ -84,21 +84,24 @@ public:
 
 	size_t size() const { return m_stack.size(); }
 
-	void createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg);
-	void createExactStack(std::vector<StackSlot> const& _target, SSACFG const& _cfg, PhiMapping const& _phis);
+	void createExactStack(std::vector<StackSlot> const& _target);
+	void createExactStack(std::vector<StackSlot> const& _target, PhiMapping const& _phis);
 
-	void push(SSACFG::ValueId const& _value, SSACFG const& _cfg, bool _generateInstruction = true);
+	void createStack(std::vector<StackSlot> const& _top, std::vector<StackSlot> const& _rest, PhiMapping const& _phis = {});
+
+	void push(SSACFG::ValueId const& _value, bool _generateInstruction = true);
 	void pop(bool _generateInstruction = true);
 	void swap(size_t _depth, bool _generateInstruction = true);
 	void dup(size_t _depth, bool _generateInstruction = true);
 	bool dup(StackSlot const& _slot, bool _generateInstruction = true);
 	bool empty() const;
 	void clear();
-	void bringUpSlot(StackSlot const& _slot, SSACFG const& _cfg);
+	void bringUpSlot(StackSlot const& _slot);
 
 	std::optional<size_t> slotIndex(StackSlot const& _slot) const;
 private:
 	std::reference_wrapper<AbstractAssembly> m_assembly;
+	std::reference_wrapper<SSACFG const> m_cfg;
 	std::vector<StackSlot> m_stack;
 };
 }
