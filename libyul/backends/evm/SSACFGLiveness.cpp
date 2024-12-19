@@ -90,6 +90,12 @@ void SSACFGLiveness::runDagDfs()
 		if (std::holds_alternative<SSACFG::BasicBlock::FunctionReturn>(block.exit))
 			live += std::get<SSACFG::BasicBlock::FunctionReturn>(block.exit).returnValues
 					| ranges::views::filter(literalsFilter(m_cfg));
+		if (std::holds_alternative<SSACFG::BasicBlock::ConditionalJump>(block.exit))
+			if (
+				auto const& condition = std::get<SSACFG::BasicBlock::ConditionalJump>(block.exit).condition;
+				literalsFilter(m_cfg)(condition)
+			)
+				live.emplace(condition);
 
 		// clean out unreachables
 		live = live | ranges::views::filter([&](auto const& valueId) { return !std::holds_alternative<SSACFG::UnreachableValue>(m_cfg.valueInfo(valueId)); }) | ranges::to<std::set>;
