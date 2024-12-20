@@ -76,7 +76,7 @@ public:
 		langutil::DebugData::ConstPtr debugData;
 		std::reference_wrapper<Scope::Function const> function;
 		std::reference_wrapper<FunctionCall const> call;
-		bool const canContinue = true;
+		bool canContinue;
 	};
 
 	struct Operation {
