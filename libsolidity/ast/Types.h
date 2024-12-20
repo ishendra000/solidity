@@ -81,7 +81,7 @@ class StorageOffsets
 public:
 	/// Resets the StorageOffsets objects and determines the position in storage for each
 	/// of the elements of @a _types.
-	void computeOffsets(TypePointers const& _types);
+	void computeOffsets(TypePointers const& _types, u256 _storageBaseLocation = 0);
 	/// @returns the offset of the given member, might be null if the member is not part of storage.
 	std::pair<u256, unsigned> const* offset(size_t _index) const;
 	/// @returns the total number of slots occupied by all members.
