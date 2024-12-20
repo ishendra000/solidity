@@ -340,14 +340,14 @@ std::vector<StackTooDeepError> SSACFGEVMCodeTransform::run(
 	return stackErrors;
 }
 
-std::map<Scope::Function const*, AbstractAssembly::LabelID> SSACFGEVMCodeTransform::registerFunctionLabels
+SSACFGEVMCodeTransform::FunctionLabels SSACFGEVMCodeTransform::registerFunctionLabels
 (
 	AbstractAssembly& _assembly,
 	ControlFlow const& _controlFlow,
 	UseNamedLabels _useNamedLabelsForFunctions
 )
 {
-	std::map<Scope::Function const*, AbstractAssembly::LabelID> functionLabels;
+	FunctionLabels functionLabels;
 
 	for (auto const& [_function, _functionGraph]: _controlFlow.functionGraphMapping)
 	{
@@ -392,6 +392,7 @@ void SSACFGEVMCodeTransform::transformFunction(Scope::Function const& _function)
 	std::cout << "Generating code for function " << _function.name.str() << ", label=" << label << std::endl;
 	m_assembly.appendLabel(label);
 	blockData(m_cfg.entry).stackIn = m_cfg.arguments | ranges::views::transform([](auto&& _tuple) { return std::get<1>(_tuple); }) | ranges::to<std::vector<ssacfg::StackSlot>>;
+	// todo ranges::views::reverse | ?
 	(*this)(m_cfg.entry);
 }
 
@@ -458,14 +459,16 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::BlockId const _block)
 			if (!zeroLayout)
 				zeroLayout = m_liveness.liveIn(_conditionalJump.zero) | ranges::to<std::vector<ssacfg::StackSlot>>;
 			auto const liveOut = m_liveness.liveOut(_block) | ranges::to<std::vector<ssacfg::StackSlot>>;
-			m_stack.createStack(*nonZeroLayout + std::vector{ssacfg::StackSlot{_conditionalJump.condition}}, liveOut, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.nonZero});
+			std::cout << "\t\tCreating stack for non zero layout" << std::endl;
+			m_stack.createStack(*nonZeroLayout + std::vector<ssacfg::StackSlot>{_conditionalJump.condition}, liveOut, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.nonZero});
 			yulAssert(m_stack.top() == ssacfg::StackSlot{_conditionalJump.condition});
 
 			// Emit the conditional jump to the non-zero label and update the stored stack.
 			m_assembly.appendJumpToIf(*nonZeroLabel);
 			m_stack.pop(false);
 
-			m_stack.createStack(*zeroLayout, liveOut, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
+			std::cout << "\t\tCreating stack for zero layout" << std::endl;
+			m_stack.createStack(*zeroLayout, {}, ssacfg::PhiMapping{m_cfg, _block, _conditionalJump.zero});
 			m_assembly.appendJumpTo(*zeroLabel);
 
 			if (!m_generatedBlocks[_conditionalJump.zero.value])
@@ -515,8 +518,10 @@ void SSACFGEVMCodeTransform::operator()(SSACFG::Operation const& _operation, std
 			returnLabel = m_assembly.newLabelId();
 			requiredStackTop.emplace_back(*returnLabel);
 		}
-	// todo sort by inverse order of occurrence
-	requiredStackTop += _operation.inputs;
+	if (std::holds_alternative<SSACFG::Call>(_operation.kind))
+		requiredStackTop += _operation.inputs | ranges::views::reverse; // todo errhh..
+	else
+		requiredStackTop += _operation.inputs;
 	// literals should have been pulled out a priori and now are treated as push constants
 	yulAssert(std::none_of(
 		_liveOut.begin(),

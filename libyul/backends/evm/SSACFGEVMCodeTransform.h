@@ -169,7 +169,7 @@ private:
 	SSACFG const& m_cfg;
 	SSACFGLiveness const& m_liveness;
 	std::vector<StackTooDeepError> m_stackErrors;
-	std::map<Scope::Function const*, AbstractAssembly::LabelID> const m_functionLabels;
+	FunctionLabels const m_functionLabels;
 	ssacfg::Stack m_stack;
 	std::vector<BlockData> m_blockData;
 	SSACFG::BlockId m_currentBlock;
