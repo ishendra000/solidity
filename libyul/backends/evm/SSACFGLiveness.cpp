@@ -87,15 +87,10 @@ void SSACFGLiveness::runDagDfs()
 				if (!m_topologicalSort.backEdge(blockId, _successor))
 					live += m_liveIns[_successor.value] - m_cfg.block(_successor).phis;
 			});
+		// todo move?
 		if (std::holds_alternative<SSACFG::BasicBlock::FunctionReturn>(block.exit))
 			live += std::get<SSACFG::BasicBlock::FunctionReturn>(block.exit).returnValues
 					| ranges::views::filter(literalsFilter(m_cfg));
-		if (std::holds_alternative<SSACFG::BasicBlock::ConditionalJump>(block.exit))
-			if (
-				auto const& condition = std::get<SSACFG::BasicBlock::ConditionalJump>(block.exit).condition;
-				literalsFilter(m_cfg)(condition)
-			)
-				live.emplace(condition);
 
 		// clean out unreachables
 		live = live | ranges::views::filter([&](auto const& valueId) { return !std::holds_alternative<SSACFG::UnreachableValue>(m_cfg.valueInfo(valueId)); }) | ranges::to<std::set>;
@@ -104,14 +99,23 @@ void SSACFGLiveness::runDagDfs()
 		m_liveOuts[blockId.value] = live;
 
 		// for each program point p in B, backwards, do:
-		for (auto const& op: block.operations | ranges::views::reverse)
 		{
-			// remove variables defined at p from live
-			live -= op.outputs | ranges::views::filter(literalsFilter(m_cfg)) | ranges::to<std::vector>;
-			// add uses at p to live
-			live += op.inputs | ranges::views::filter(literalsFilter(m_cfg)) | ranges::to<std::vector>;
+			// starting with exits that consume values, add to live set
+			if (std::holds_alternative<SSACFG::BasicBlock::ConditionalJump>(block.exit))
+				if (
+					auto const& condition = std::get<SSACFG::BasicBlock::ConditionalJump>(block.exit).condition;
+					literalsFilter(m_cfg)(condition)
+				)
+					live.emplace(condition);
+			// todo jumptable etc
+			for (auto const& op: block.operations | ranges::views::reverse)
+			{
+				// remove variables defined at p from live
+				live -= op.outputs | ranges::views::filter(literalsFilter(m_cfg)) | ranges::to<std::vector>;
+				// add uses at p to live
+				live += op.inputs | ranges::views::filter(literalsFilter(m_cfg)) | ranges::to<std::vector>;
+			}
 		}
-
 		// livein(b) <- live \cup PhiDefs(B)
 		m_liveIns[blockId.value] = live + block.phis;
 	}
